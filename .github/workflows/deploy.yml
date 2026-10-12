@@ -1,0 +1,42 @@
+name: Build and Deploy (self-hosted runner)
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: [self-hosted, azure, vnet]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Azure login (VM managed identity)
+        run: az login --identity
+
+      - name: Build and push image to ACR
+        run: |
+          az acr build \
+            --registry ${{ vars.ACR_NAME }} \
+            --image pipeline-test:${{ github.sha }} \
+            --image pipeline-test:latest \
+            --file Dockerfile \
+            .
+
+      - name: Deploy new revision to Container App
+        run: |
+          az containerapp update \
+            --name ${{ vars.CONTAINER_APP }} \
+            --resource-group ${{ vars.AZURE_RESOURCE_GROUP }} \
+            --image ${{ vars.ACR_NAME }}.azurecr.io/pipeline-test:${{ github.sha }} \
+            --set-env-vars APP_VERSION=${{ github.sha }}
+
+      - name: Show app URL
+        run: |
+          FQDN=$(az containerapp show \
+            --name ${{ vars.CONTAINER_APP }} \
+            --resource-group ${{ vars.AZURE_RESOURCE_GROUP }} \
+            --query properties.configuration.ingress.fqdn -o tsv)
+          echo "App URL: https://$FQDN"
+          echo "Health:  https://$FQDN/health"
