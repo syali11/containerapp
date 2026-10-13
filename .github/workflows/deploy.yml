@@ -32,11 +32,30 @@ jobs:
             --image ${{ vars.ACR_NAME }}.azurecr.io/pipeline-test:${{ github.sha }} \
             --set-env-vars APP_VERSION=${{ github.sha }}
 
-      - name: Show app URL
+      - name: Ensure ingress target port is 8080
+        run: |
+          az containerapp ingress update \
+            --name ${{ vars.CONTAINER_APP }} \
+            --resource-group ${{ vars.AZURE_RESOURCE_GROUP }} \
+            --target-port 8080
+
+      - name: Wait and verify health
         run: |
           FQDN=$(az containerapp show \
             --name ${{ vars.CONTAINER_APP }} \
             --resource-group ${{ vars.AZURE_RESOURCE_GROUP }} \
             --query properties.configuration.ingress.fqdn -o tsv)
           echo "App URL: https://$FQDN"
-          echo "Health:  https://$FQDN/health"
+          echo "Waiting for the new revision to come up..."
+          for i in $(seq 1 10); do
+            sleep 15
+            CODE=$(curl -s -o /dev/null -w "%{http_code}" "https://$FQDN/health" || echo "000")
+            echo "Attempt $i: HTTP $CODE"
+            if [ "$CODE" = "200" ]; then
+              echo "Healthy! Response:"
+              curl -s "https://$FQDN/health"
+              exit 0
+            fi
+          done
+          echo "App did not become healthy in time"
+          exit 1
